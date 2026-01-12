@@ -28,8 +28,8 @@ impl SyncHandle {
         let worker_url = api_url.clone();
 
         // Ensure root exists before watching
-        if let Err(e) = fs::create_dir_all(&local_root) {
-            log::error!("Failed to create sync root {:?}: {}", local_root, e);
+        if let Err(e) = ensure_sync_root(&local_root) {
+            log::error!("Failed to initialize sync root {:?}: {}", local_root, e);
         }
 
         // Channel for watcher to communicate with worker
@@ -162,7 +162,7 @@ impl SyncWorker {
     ) -> Self {
         // Create DB
         let db_path = resolve_db_path(&local_root);
-        let _ = fs::create_dir_all(&local_root);
+        let _ = ensure_sync_root(&local_root);
         let db = Database::new(&db_path).expect("Failed to initialize database");
 
         // Create reusable runtime - avoids expensive runtime creation on every sync
@@ -274,6 +274,10 @@ impl SyncWorker {
         log::debug!("Sync check starting...");
 
         self.runtime.block_on(async {
+            // Safety: Ensure sync root is valid and accessible before doing anything
+            ensure_sync_root(&self.local_root)?;
+            normalize_db_paths(&self.db)?;
+
             // A. PULL Phase (Server -> Client)
             // Loop until all server events are processed
             let mut processed_any = false;
@@ -316,25 +320,34 @@ impl SyncWorker {
                                 // API now provides "path" field for ALL entity types (files AND folders)
                                 let effective_path_str = if let Some(p) = &data.path {
                                     // Primary path source - server provides full path for all entities
-                                    p.clone()
+                                    normalize_remote_path(p)
                                 } else if let Some(sp) = &data.storage_path {
                                     // Fallback: strip owner prefix if available
                                     if let Some(owner) = &event.owner_id {
                                         let prefix = format!("{}/", owner);
-                                        sp.strip_prefix(&prefix).unwrap_or(sp).to_string()
+                                        normalize_remote_path(sp.strip_prefix(&prefix).unwrap_or(sp))
                                     } else {
-                                        sp.to_string()
+                                        normalize_remote_path(sp)
                                     }
                                 } else {
                                     // Last resort: use name only (for backward compatibility)
-                                    data.name.clone().unwrap_or_default()
+                                    normalize_remote_path(&data.name.clone().unwrap_or_default())
                                 };
 
                                 if effective_path_str.is_empty() {
                                     continue;
                                 }
 
-                                let local_path = self.local_root.join(&effective_path_str);
+                                if !is_safe_relative_path(&effective_path_str) {
+                                    log::error!(
+                                        "Skipping unsafe path from server: {}",
+                                        effective_path_str
+                                    );
+                                    continue;
+                                }
+
+                                let local_path =
+                                    local_path_from_relative(&self.local_root, &effective_path_str);
 
 
 
@@ -413,7 +426,7 @@ impl SyncWorker {
                                         }
                                     } else {
                                         // Update DB with correct metadata
-                                        self.db
+                                            self.db
                                             .insert_or_update(&FileRecord {
                                                 path: effective_path_str.clone(),
                                                 id: Some(file_id),
@@ -433,7 +446,8 @@ impl SyncWorker {
                                 self.db.get_file_by_id(&event.entity_id).unwrap_or(None)
                             {
                                 log::info!("Deleting local: {}", record.path);
-                                let full_path = self.local_root.join(&record.path);
+                                let full_path =
+                                    local_path_from_relative(&self.local_root, &record.path);
 
                                 // Check if it's a directory
                                 if full_path.is_dir() {
@@ -454,19 +468,24 @@ impl SyncWorker {
                                 let file_id = event.entity_id.clone();
                                 // Determine new path (reuse logic)
                                 let new_path_str = if let Some(p) = &data.path {
-                                    p.clone()
+                                    normalize_remote_path(p)
                                 } else if let Some(sp) = &data.storage_path {
                                     if let Some(owner) = &event.owner_id {
                                         let prefix = format!("{}/", owner);
-                                        sp.strip_prefix(&prefix).unwrap_or(sp).to_string()
+                                        normalize_remote_path(sp.strip_prefix(&prefix).unwrap_or(sp))
                                     } else {
-                                        sp.to_string()
+                                        normalize_remote_path(sp)
                                     }
                                 } else {
-                                    data.name.clone().unwrap_or_default()
+                                    normalize_remote_path(&data.name.clone().unwrap_or_default())
                                 };
 
                                 if new_path_str.is_empty() {
+                                    continue;
+                                }
+
+                                if !is_safe_relative_path(&new_path_str) {
+                                    log::error!("Skipping unsafe move path: {}", new_path_str);
                                     continue;
                                 }
 
@@ -474,8 +493,10 @@ impl SyncWorker {
                                 let old_record_opt = self.db.get_file_by_id(&file_id).unwrap_or(None);
 
                                 if let Some(old_record) = old_record_opt {
-                                    let old_local = self.local_root.join(&old_record.path);
-                                    let new_local = self.local_root.join(&new_path_str);
+                                    let old_local =
+                                        local_path_from_relative(&self.local_root, &old_record.path);
+                                    let new_local =
+                                        local_path_from_relative(&self.local_root, &new_path_str);
 
                                     log::info!("Moving {} -> {}", old_record.path, new_path_str);
 
@@ -587,10 +608,15 @@ impl SyncWorker {
             let local_files = self.scan_local_files();
             let db_records = self.db.get_all_files().unwrap_or_default();
 
+            // Safety: refuse destructive deletes if the root looks empty or invalid
+            if local_files.is_empty() && !db_records.is_empty() && is_effectively_empty_root(&self.local_root)? {
+                return Err("Local sync root appears empty or inaccessible; refusing to delete remote files.".to_string());
+            }
+
             // 1. Check for Deletions
             for db_rec in &db_records {
-                if !local_files.contains_key(&db_rec.path) {
-                    log::info!("Local delete detected for {}. Pushing...", db_rec.path);
+                    if !local_files.contains_key(&db_rec.path) {
+                        log::info!("Local delete detected for {}. Pushing...", db_rec.path);
 
                     if let Some(fid) = &db_rec.id {
                         if db_rec.hash == "directory" {
@@ -693,6 +719,7 @@ impl SyncWorker {
                 .unwrap()
                 .to_string_lossy()
                 .to_string();
+            let relative = normalize_local_path(&relative);
 
             if entry.file_type().is_file() {
                 let existing = self.db.get_file(&relative).unwrap_or(None);
@@ -752,7 +779,7 @@ impl SyncWorker {
                 }
             }
         }
-        let local_path = self.local_root.join(path);
+        let local_path = local_path_from_relative(&self.local_root, path);
         if let Some(parent) = local_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -937,7 +964,7 @@ impl SyncWorker {
     }
 
     async fn upload_file(&self, path: &str) -> Result<(), String> {
-        let local_path = self.local_root.join(path);
+        let local_path = local_path_from_relative(&self.local_root, path);
 
         // Safety check: Never upload directories as files
         if local_path.is_dir() {
@@ -1018,6 +1045,105 @@ fn resolve_db_path(local_root: &Path) -> PathBuf {
         return legacy_path;
     }
     new_path
+}
+
+fn ensure_sync_root(path: &Path) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("Sync root is empty".to_string());
+    }
+    if !path.is_absolute() {
+        return Err("Sync root must be absolute".to_string());
+    }
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
+        }
+        return Err("Sync root is not a directory".to_string());
+    }
+    fs::create_dir_all(path).map_err(|e| e.to_string())?;
+    if !path.is_dir() {
+        return Err("Failed to create sync root directory".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_local_path(path: &str) -> String {
+    if std::path::MAIN_SEPARATOR == '\\' {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
+}
+
+fn normalize_remote_path(path: &str) -> String {
+    if std::path::MAIN_SEPARATOR == '\\' {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
+}
+
+fn local_path_from_relative(root: &Path, relative: &str) -> PathBuf {
+    let mut out = PathBuf::from(root);
+    for part in relative.split('/').filter(|p| !p.is_empty()) {
+        out.push(part);
+    }
+    out
+}
+
+fn is_safe_relative_path(path: &str) -> bool {
+    if Path::new(path).is_absolute() {
+        return false;
+    }
+    for part in path.split('/') {
+        if part == ".." {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_effectively_empty_root(root: &Path) -> Result<bool, String> {
+    let entries = fs::read_dir(root).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry
+            .file_name()
+            .to_string_lossy()
+            .to_string();
+        if name == ".xynoxa.db" || name == ".git" || name == "node_modules" {
+            continue;
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn normalize_db_paths(db: &Database) -> Result<(), String> {
+    if std::path::MAIN_SEPARATOR != '\\' {
+        return Ok(());
+    }
+
+    let records = db.get_all_files().map_err(|e| e.to_string())?;
+    for record in records {
+        if !record.path.contains('\\') {
+            continue;
+        }
+        let normalized = record.path.replace('\\', "/");
+        if normalized == record.path {
+            continue;
+        }
+
+        let existing = db.get_file(&normalized).map_err(|e| e.to_string())?;
+        if existing.is_none() {
+            let mut updated = record.clone();
+            updated.path = normalized.clone();
+            db.insert_or_update(&updated).map_err(|e| e.to_string())?;
+        }
+        db.delete_file(&record.path).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 fn compute_hash(path: &Path) -> Result<String, String> {

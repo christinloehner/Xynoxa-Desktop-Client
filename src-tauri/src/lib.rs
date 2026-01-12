@@ -124,6 +124,37 @@ fn save_config(
 }
 
 #[tauri::command]
+fn expand_sync_path(path: &str) -> String {
+    if path.starts_with("~/") {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        path.replacen("~", &home, 1)
+    } else {
+        path.to_string()
+    }
+}
+
+fn validate_sync_root(path: &PathBuf) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("Sync path is empty".to_string());
+    }
+    if !path.is_absolute() {
+        return Err("Sync path must be absolute".to_string());
+    }
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
+        }
+        return Err("Sync path is not a directory".to_string());
+    }
+    std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
+    if !path.is_dir() {
+        return Err("Failed to create sync directory".to_string());
+    }
+    Ok(())
+}
+
 fn start_sync(state: State<AppState>, token: Option<String>) -> Result<String, String> {
     // Load config
     let raw = state.config_manager.lock().map_err(|_| "Lock fail")?;
@@ -133,13 +164,8 @@ fn start_sync(state: State<AppState>, token: Option<String>) -> Result<String, S
     let path_str = conf.sync_path.clone().ok_or("No sync path configured")?;
     let config_token = conf.auth_token.clone();
 
-    // Expand ~
-    let path_str = if path_str.starts_with("~/") {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        path_str.replacen("~", &home, 1)
-    } else {
-        path_str
-    };
+    // Expand ~ for cross-platform safety
+    let path_str = expand_sync_path(&path_str);
 
     let api_url = conf.server_url.clone(); // Clone before drop? yes.
 
@@ -178,7 +204,9 @@ fn start_sync(state: State<AppState>, token: Option<String>) -> Result<String, S
     }
 
     // Create Handle (which spawns Worker)
-    let handle = SyncHandle::new(auth_token, PathBuf::from(path_str), api_url);
+    let root = PathBuf::from(path_str);
+    validate_sync_root(&root)?;
+    let handle = SyncHandle::new(auth_token, root, api_url);
 
     *engine_guard = Some(handle);
     Ok("Sync started".to_string())
@@ -317,20 +345,19 @@ pub fn run() {
                         let cm = raw.as_ref().unwrap();
                         let conf = cm.config.lock().unwrap();
                         let path_str = conf.sync_path.clone().unwrap_or_default();
-                        // Expand ~ if present
-                        let path_str = if path_str.starts_with("~/") {
-                            let home_env =
-                                std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                            path_str.replacen("~", &home_env, 1)
-                        } else {
-                            path_str
-                        };
+                        let path_str = expand_sync_path(&path_str);
                         let api_url = conf.server_url.clone();
                         drop(conf);
                         drop(raw);
 
+                        let root = PathBuf::from(path_str);
+                        if let Err(e) = validate_sync_root(&root) {
+                            log::error!("Sync root invalid, aborting autostart: {}", e);
+                            return;
+                        }
+
                         // SyncHandle::new starts the thread and watcher internally
-                        let handle = SyncHandle::new(token, PathBuf::from(path_str), api_url);
+                        let handle = SyncHandle::new(token, root, api_url);
                         *state.sync_engine.lock().unwrap() = Some(handle);
                         log::info!("Sync engine auto-started in background.");
                     });
