@@ -25,3 +25,18 @@ npm run build-app
 ```
 
 Hinweis: Builds/Deployments laufen über die CI; lokal wird in dieser Umgebung nichts gebaut oder gestartet.
+
+Erzeugte Artefakte (je nach Build‑OS):
+- Linux: `.deb` und `.AppImage`
+- Windows: `.exe` (NSIS)
+- macOS: `.dmg`
+
+## Releases (GitHub)
+Releases werden automatisch gebaut, sobald ein Tag gepusht wird (Format `vX.Y.Z`).
+Die GitHub Action erstellt dann einen Release und hängt die Artefakte an.
+
+Taggen und pushen:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
