@@ -1,0 +1,27 @@
+# Xynoxa Desktop Client
+
+Der Xynoxa Desktop Client ist der Tauri-basierte Sync‑Client, der deinen lokalen Ordner `~/Xynoxa` mit der Xynoxa Cloud synchronisiert. Fokus: schnelle, ressourcenschonende Sync‑Engine, robuste Konfliktbehandlung und nahtlose OS‑Integration.
+
+## Tech Stack
+- React + TypeScript + TailwindCSS (UI)
+- Tauri + Rust (Sync Core)
+
+## Features (Auszug)
+- Datei‑Sync mit Delta‑Logik (Create/Update/Move/Delete)
+- Lokale SQLite‑DB für Index & Cursor
+- OS‑Keyring für Token‑Speicherung
+- File‑Watcher + Debounce‑Sync
+- Gruppenordner‑Support
+
+## Development
+```bash
+npm install
+npm run dev
+```
+
+## Build (App)
+```bash
+npm run build-app
+```
+
+Hinweis: Builds/Deployments laufen über die CI; lokal wird in dieser Umgebung nichts gebaut oder gestartet.

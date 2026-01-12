@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Network;FileTransfer;Utility;
+Comment=Sync your files with Xynoxa Cloud
+Exec=env GDK_BACKEND=x11 {{exec}}
+Icon=xynoxa-desktop-client
+Name={{name}}
+Terminal=false
+Type=Application
+StartupWMClass=xynoxa-desktop-client
