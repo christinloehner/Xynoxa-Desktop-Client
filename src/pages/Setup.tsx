@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { homeDir, join } from "@tauri-apps/api/path";
+import { open } from "@tauri-apps/plugin-dialog";
+import { enable as enableAutostart } from "@tauri-apps/plugin-autostart";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,9 +16,49 @@ export default function Setup({ onComplete }: SetupProps) {
     const [step, setStep] = useState(1);
     const [serverUrl, setServerUrl] = useState("https://dev.xynoxa.com");
     const [token, setToken] = useState("");
-    const [syncPath, setSyncPath] = useState("~/Xynoxa"); // In a real app, use dialog.open
+    const [syncPath, setSyncPath] = useState("");
     const [loading, setLoading] = useState(false);
+    const [selectingFolder, setSelectingFolder] = useState(false);
     const [error, setError] = useState("");
+
+    useEffect(() => {
+        let active = true;
+        const setDefaultPath = async () => {
+            try {
+                const home = await homeDir();
+                if (!home) return;
+                const suggested = await join(home, "Xynoxa");
+                if (active && !syncPath) {
+                    setSyncPath(suggested);
+                }
+            } catch {
+                // Keep empty if we can't resolve a default
+            }
+        };
+        setDefaultPath();
+        return () => {
+            active = false;
+        };
+    }, [syncPath]);
+
+    const handleChooseFolder = async () => {
+        setError("");
+        setSelectingFolder(true);
+        try {
+            const selected = await open({
+                directory: true,
+                multiple: false,
+                title: "Select Sync Folder"
+            });
+            if (typeof selected === "string" && selected.length > 0) {
+                setSyncPath(selected);
+            }
+        } catch (e) {
+            setError("Folder selection failed: " + e);
+        } finally {
+            setSelectingFolder(false);
+        }
+    };
 
     const handleNext = async () => {
         setError("");
@@ -45,6 +88,10 @@ export default function Setup({ onComplete }: SetupProps) {
             }
         } else if (step === 3) {
             // Save Config and Finish
+            if (!syncPath) {
+                setError("Please choose a local sync folder.");
+                return;
+            }
             setLoading(true);
             try {
                 await invoke("save_config", {
@@ -52,6 +99,11 @@ export default function Setup({ onComplete }: SetupProps) {
                     path: syncPath,
                     completed: true
                 });
+                try {
+                    await enableAutostart();
+                } catch (e) {
+                    console.warn("Failed to enable autostart", e);
+                }
                 // Start initial sync
                 await invoke("start_sync", { token });
                 onComplete();
@@ -104,13 +156,26 @@ export default function Setup({ onComplete }: SetupProps) {
                     {step === 3 && (
                         <div className="space-y-2">
                             <Label>Local Sync Folder</Label>
-                            <Input
-                                value={syncPath}
-                                onChange={(e) => setSyncPath(e.target.value)}
-                                placeholder="~/Xynoxa"
-                                className="bg-zinc-950/50 border-zinc-800"
-                            />
-                            <p className="text-xs text-zinc-500">Files will be synchronized to this folder.</p>
+                            <div className="flex gap-2">
+                                <Input
+                                    value={syncPath}
+                                    readOnly
+                                    placeholder="Select a folder"
+                                    className="bg-zinc-950/50 border-zinc-800"
+                                />
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={handleChooseFolder}
+                                    disabled={loading || selectingFolder}
+                                    className="shrink-0"
+                                >
+                                    {selectingFolder ? "Selecting..." : "Choose"}
+                                </Button>
+                            </div>
+                            <p className="text-xs text-zinc-500">
+                                Pick a local folder to sync. You can create a new folder in the dialog.
+                            </p>
                         </div>
                     )}
                     {error && <div className="text-sm text-red-400 font-medium">{error}</div>}

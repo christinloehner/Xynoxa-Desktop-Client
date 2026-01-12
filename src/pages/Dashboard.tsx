@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import logo from "@/assets/xynoxa-logo-dark.png";
 
 type SyncState = "idle" | "pulling" | "pushing" | "syncing";
@@ -7,10 +8,12 @@ type SyncState = "idle" | "pulling" | "pushing" | "syncing";
 export default function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [syncStatus, setSyncStatus] = useState<SyncState>("idle");
     const [syncPath, setSyncPath] = useState("");
+    const [appVersion, setAppVersion] = useState("");
 
     useEffect(() => {
         loadConfig();
         startSyncOnMount();
+        loadVersion();
     }, []);
 
     const loadConfig = async () => {
@@ -32,6 +35,15 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
         } catch (e) {
             console.error(e);
             setSyncStatus("idle");
+        }
+    };
+
+    const loadVersion = async () => {
+        try {
+            const version = await getVersion();
+            setAppVersion(version);
+        } catch (e) {
+            console.error("Failed to load app version", e);
         }
     };
 
@@ -98,7 +110,10 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
 
             {/* Copyright */}
             <footer className="text-center text-xs text-zinc-600 mt-8">
-                <p>Xynoxa © 2025 Christin Löhner</p>
+                <p>
+                    Xynoxa © 2025 Christin Löhner
+                    {appVersion ? ` · v${appVersion}` : ""}
+                </p>
                 <a
                     href="https://www.xynoxa.com"
                     target="_blank"
