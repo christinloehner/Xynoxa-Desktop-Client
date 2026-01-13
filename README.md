@@ -1,6 +1,15 @@
 # Xynoxa Desktop Client
 
-Der Xynoxa Desktop Client ist der Tauri-basierte Sync‑Client, der deinen lokalen Ordner `~/Xynoxa` mit der Xynoxa Cloud synchronisiert. Fokus: schnelle, ressourcenschonende Sync‑Engine, robuste Konfliktbehandlung und nahtlose OS‑Integration.
+The Xynoxa Desktop Client is the Tauri-based sync client that keeps your local folder `~/Xynoxa` in sync with the Xynoxa Cloud. Focus: a fast, resource-efficient sync engine, robust conflict handling, and seamless OS integration.
+
+## Official Links
+
+Your Xynoxa starting point: website and all repos at a glance, so you can jump straight to the right codebase.
+
+- Xynoxa Website: https://www.xynoxa.com
+- Xynoxa Cloud App: https://github.com/christinloehner/Xynoxa-Cloud
+- Xynoxa Desktop Client: https://github.com/christinloehner/Xynoxa-Desktop-Client
+- Xynoxa Mobile Client: https://github.com/christinloehner/Xynoxa-Mobile-Client
 
 ## ATTENTION  ATTENTION  ATTENTION  ATTENTION  ATTENTION 
 
@@ -13,12 +22,12 @@ Warning! This application is still under development and definitely not recommen
 - React + TypeScript + TailwindCSS (UI)
 - Tauri + Rust (Sync Core)
 
-## Features (Auszug)
-- Datei‑Sync mit Delta‑Logik (Create/Update/Move/Delete)
-- Lokale SQLite‑DB für Index & Cursor
-- OS‑Keyring für Token‑Speicherung
-- File‑Watcher + Debounce‑Sync
-- Gruppenordner‑Support
+## Features (Excerpt)
+- File sync with delta logic (Create/Update/Move/Delete)
+- Local SQLite DB for index & cursor
+- OS keyring for token storage
+- File watcher + debounce sync
+- Group folder support
 
 ## Development
 ```bash
@@ -31,18 +40,18 @@ npm run dev
 npm run build-app
 ```
 
-Hinweis: Builds/Deployments laufen über die CI; lokal wird in dieser Umgebung nichts gebaut oder gestartet.
+Note: Builds/deployments run via CI; nothing is built or started locally in this environment.
 
-Erzeugte Artefakte (je nach Build‑OS):
-- Linux: `.deb`, `.rpm` und `.AppImage`
+Generated artifacts (depending on build OS):
+- Linux: `.deb`, `.rpm`, and `.AppImage`
 - Windows: `.exe` (NSIS)
 - macOS: `.dmg`
 
 ## Releases (GitHub)
-Releases werden automatisch gebaut, sobald ein Tag gepusht wird (Format `vX.Y.Z`).
-Die GitHub Action erstellt dann einen Release und hängt die Artefakte an.
+Releases are built automatically as soon as a tag is pushed (format `vX.Y.Z`).
+The GitHub Action then creates a release and attaches the artifacts.
 
-Taggen und pushen:
+Tag and push:
 ```bash
 git tag v1.0.0-Alpha1
 git push origin v1.0.0-Alpha1
